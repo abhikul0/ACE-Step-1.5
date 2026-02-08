@@ -1,3 +1,6 @@
+# Updated source files for efficient LoRa training on mps.
+# Added cli scripts to directly interface with the sourcecode without using Gradio. 
+
 <h1 align="center">ACE-Step 1.5</h1>
 <h1 align="center">Pushing the Boundaries of Open-Source Music Generation</h1>
 <p align="center">
