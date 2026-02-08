@@ -442,18 +442,18 @@ class LLMHandler:
             # produce NaN/inf when naively converted to float16 (different exponent range).
             # The DiT and VAE use float16 on MPS where it actually helps throughput.
             if dtype is None:
-                if device in ["cuda", "xpu"]:
+                if device in ["cuda", "xpu", "mps"]:
                     self.dtype = torch.bfloat16
                 else:
                     self.dtype = torch.float32
             else:
                 self.dtype = dtype
                 # Keep LM in float32 on MPS for stability.
-                if device == "mps" and self.dtype != torch.float32:
-                    logger.warning(
-                        f"[initialize] Overriding requested dtype {self.dtype} to float32 for LM on MPS."
-                    )
-                    self.dtype = torch.float32
+                #if device == "mps" and self.dtype != torch.float32:
+                #    logger.warning(
+                #        f"[initialize] Overriding requested dtype {self.dtype} to float32 for LM on MPS."
+                #    )
+                #    self.dtype = torch.float32
 
             # If lm_model_path is None, use default
             if lm_model_path is None:

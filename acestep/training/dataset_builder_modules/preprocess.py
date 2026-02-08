@@ -74,7 +74,8 @@ class PreprocessMixin:
                 audio, _ = load_audio_stereo(sample.audio_path, target_sample_rate, max_duration)
                 debug_end_verbose_for("dataset", f"load_audio_stereo[{i}]", t0)
                 debug_log_verbose_for("dataset", f"audio shape={tuple(audio.shape)} dtype={audio.dtype}")
-                audio = audio.unsqueeze(0).to(device).to(vae.dtype)
+                #audio = audio.unsqueeze(0).to(device).to(vae.dtype)
+                audio = audio.unsqueeze(0)
                 debug_log_verbose_for(
                     "dataset",
                     f"vae device={next(vae.parameters()).device} vae dtype={vae.dtype} "
@@ -83,8 +84,10 @@ class PreprocessMixin:
 
                 with torch.no_grad():
                     t0 = debug_start_verbose_for("dataset", f"vae_encode[{i}]")
-                    target_latents = vae_encode(vae, audio, dtype)
+                    #target_latents = vae_encode(vae, audio, dtype)
+                    latent = dit_handler.tiled_encode(audio, offload_latent_to_cpu=True)
                     debug_end_verbose_for("dataset", f"vae_encode[{i}]", t0)
+                target_latents = latent.to(device).transpose(1, 2).to(dtype)
 
                 latent_length = target_latents.shape[1]
                 attention_mask = torch.ones(1, latent_length, device=device, dtype=dtype)

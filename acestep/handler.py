@@ -425,7 +425,7 @@ class AceStepHandler:
             # MPS does not support bfloat16 natively, and converting bfloat16-trained
             # weights to float16 causes NaN/Inf due to the narrower exponent range.
             # Use float32 on MPS for numerical stability.
-            if device in ["cuda", "xpu"]:
+            if device in ["cuda", "xpu", "mps"]:
                 self.dtype = torch.bfloat16
             else:
                 self.dtype = torch.float32

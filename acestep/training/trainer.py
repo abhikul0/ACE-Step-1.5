@@ -56,7 +56,7 @@ def _select_compute_dtype(device_type: str) -> torch.dtype:
     if device_type in ("cuda", "xpu"):
         return torch.bfloat16
     if device_type == "mps":
-        return torch.float16
+        return torch.bfloat16
     return torch.float32
 
 
@@ -65,7 +65,7 @@ def _select_fabric_precision(device_type: str) -> str:
     if device_type in ("cuda", "xpu"):
         return "bf16-mixed"
     if device_type == "mps":
-        return "16-mixed"
+        return "bf16-mixed"
     return "32-true"
 
 
@@ -148,80 +148,125 @@ class PreprocessedLoRAModule(nn.Module):
         # Store training losses
         self.training_losses = []
     
+    # def training_step(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+    #     """Single training step using preprocessed tensors.
+        
+    #     Note: This is a distilled turbo model, NO CFG is used.
+        
+    #     Args:
+    #         batch: Dictionary containing pre-computed tensors:
+    #             - target_latents: [B, T, 64] - VAE encoded audio
+    #             - attention_mask: [B, T] - Valid audio mask
+    #             - encoder_hidden_states: [B, L, D] - Condition encoder output
+    #             - encoder_attention_mask: [B, L] - Condition mask
+    #             - context_latents: [B, T, 128] - Source context
+            
+    #     Returns:
+    #         Loss tensor (float32 for stable backward)
+    #     """
+    #     # Use autocast for mixed precision training (bf16 on CUDA/XPU, fp16 on MPS)
+    #     if self.device_type in ("cuda", "xpu", "mps"):
+    #         autocast_ctx = torch.autocast(device_type=self.device_type, dtype=self.dtype)
+    #     else:
+    #         autocast_ctx = nullcontext()
+    #     with autocast_ctx:
+    #         # Get tensors from batch (already on device from Fabric dataloader)
+    #         target_latents = batch["target_latents"].to(
+    #             self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
+    #         )  # x0
+    #         attention_mask = batch["attention_mask"].to(
+    #             self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
+    #         )
+    #         encoder_hidden_states = batch["encoder_hidden_states"].to(
+    #             self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
+    #         )
+    #         encoder_attention_mask = batch["encoder_attention_mask"].to(
+    #             self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
+    #         )
+    #         context_latents = batch["context_latents"].to(
+    #             self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
+    #         )
+            
+    #         bsz = target_latents.shape[0]
+            
+    #         # Flow matching: sample noise x1 and interpolate with data x0
+    #         x1 = torch.randn_like(target_latents)  # Noise
+    #         x0 = target_latents  # Data
+            
+    #         # Sample timesteps from discrete turbo shift=3 schedule (8 steps)
+    #         t, r = sample_discrete_timestep(bsz, self.timesteps_tensor)
+    #         t_ = t.unsqueeze(-1).unsqueeze(-1)
+            
+    #         # Interpolate: x_t = t * x1 + (1 - t) * x0
+    #         xt = t_ * x1 + (1.0 - t_) * x0
+            
+    #         # Forward through decoder (distilled turbo model, no CFG)
+    #         decoder_outputs = self.model.decoder(
+    #             hidden_states=xt,
+    #             timestep=t,
+    #             timestep_r=t,
+    #             attention_mask=attention_mask,
+    #             encoder_hidden_states=encoder_hidden_states,
+    #             encoder_attention_mask=encoder_attention_mask,
+    #             context_latents=context_latents,
+    #         )
+            
+    #         # Flow matching loss: predict the flow field v = x1 - x0
+    #         flow = x1 - x0
+    #         diffusion_loss = F.mse_loss(decoder_outputs[0], flow)
+        
+    #     # Convert loss to float32 for stable backward pass
+    #     diffusion_loss = diffusion_loss.float()
+        
+    #     self.training_losses.append(diffusion_loss.item())
+        
+    #     return diffusion_loss
+
     def training_step(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Single training step using preprocessed tensors.
+        """Fixed: Uniform float16 for MPS type compatibility."""
+        # Move tensors as float16 explicitly
+        dtype = torch.float32  # MPS stable dtype
+        target_latents = batch["target_latents"].to(self.device, dtype=dtype, non_blocking=True)
+        attention_mask = batch["attention_mask"].to(self.device, dtype=torch.long, non_blocking=True)
+        encoder_hidden_states = batch["encoder_hidden_states"].to(self.device, dtype=dtype, non_blocking=True)
+        encoder_attention_mask = batch["encoder_attention_mask"].to(self.device, dtype=torch.long, non_blocking=True)
+        context_latents = batch["context_latents"].to(self.device, dtype=dtype, non_blocking=True)
         
-        Note: This is a distilled turbo model, NO CFG is used.
+        bsz = target_latents.shape[0]
         
-        Args:
-            batch: Dictionary containing pre-computed tensors:
-                - target_latents: [B, T, 64] - VAE encoded audio
-                - attention_mask: [B, T] - Valid audio mask
-                - encoder_hidden_states: [B, L, D] - Condition encoder output
-                - encoder_attention_mask: [B, L] - Condition mask
-                - context_latents: [B, T, 128] - Source context
-            
-        Returns:
-            Loss tensor (float32 for stable backward)
-        """
-        # Use autocast for mixed precision training (bf16 on CUDA/XPU, fp16 on MPS)
-        if self.device_type in ("cuda", "xpu", "mps"):
-            autocast_ctx = torch.autocast(device_type=self.device_type, dtype=self.dtype)
-        else:
-            autocast_ctx = nullcontext()
-        with autocast_ctx:
-            # Get tensors from batch (already on device from Fabric dataloader)
-            target_latents = batch["target_latents"].to(
-                self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
-            )  # x0
-            attention_mask = batch["attention_mask"].to(
-                self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
-            )
-            encoder_hidden_states = batch["encoder_hidden_states"].to(
-                self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
-            )
-            encoder_attention_mask = batch["encoder_attention_mask"].to(
-                self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
-            )
-            context_latents = batch["context_latents"].to(
-                self.device, dtype=self.dtype, non_blocking=self.transfer_non_blocking
-            )
-            
-            bsz = target_latents.shape[0]
-            
-            # Flow matching: sample noise x1 and interpolate with data x0
-            x1 = torch.randn_like(target_latents)  # Noise
-            x0 = target_latents  # Data
-            
-            # Sample timesteps from discrete turbo shift=3 schedule (8 steps)
-            t, r = sample_discrete_timestep(bsz, self.timesteps_tensor)
-            t_ = t.unsqueeze(-1).unsqueeze(-1)
-            
-            # Interpolate: x_t = t * x1 + (1 - t) * x0
-            xt = t_ * x1 + (1.0 - t_) * x0
-            
-            # Forward through decoder (distilled turbo model, no CFG)
-            decoder_outputs = self.model.decoder(
-                hidden_states=xt,
-                timestep=t,
-                timestep_r=t,
-                attention_mask=attention_mask,
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
-                context_latents=context_latents,
-            )
-            
-            # Flow matching loss: predict the flow field v = x1 - x0
-            flow = x1 - x0
-            diffusion_loss = F.mse_loss(decoder_outputs[0], flow)
+        if not hasattr(self, '_checkpointing_enabled'):
+            self.model.decoder.gradient_checkpointing_enable()
+            self._checkpointing_enabled = True
         
-        # Convert loss to float32 for stable backward pass
-        diffusion_loss = diffusion_loss.float()
+        # Uniform float16 computation graph
+        x0 = target_latents  # Already float16
+        x1 = torch.randn_like(x0, dtype=dtype, requires_grad=True)
+        t, r = sample_discrete_timestep(bsz, self.timesteps_tensor)
+        t_ = t.unsqueeze(-1).unsqueeze(-1)
+        
+        # All float16 ops
+        xt = t_ * x1 + (1.0 - t_) * x0
+        decoder_outputs = self.model.decoder(
+            hidden_states=xt,
+            timestep=t.to(dtype),
+            timestep_r=r.to(dtype),
+            attention_mask=attention_mask,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            context_latents=context_latents,
+        )
+        
+        flow = x1 - x0  # Both float16 → no MPS error
+        diffusion_loss = F.mse_loss(decoder_outputs[0], flow)
+        
+        # Verify
+        assert diffusion_loss.requires_grad
+        assert diffusion_loss.grad_fn is not None
         
         self.training_losses.append(diffusion_loss.item())
-        
+        #print(f"Loss requires_grad: {diffusion_loss.requires_grad}")  # True
+        #print(f"Loss grad_fn: {diffusion_loss.grad_fn is not None}")  # True
         return diffusion_loss
-
 
 class LoRATrainer:
     """High-level trainer for ACE-Step LoRA fine-tuning.

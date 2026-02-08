@@ -79,7 +79,7 @@ class TrainingConfig:
     output_dir: str = "./lora_output"
     
     # Data loading
-    num_workers: int = 4
+    num_workers: int = 0
     pin_memory: bool = True
     prefetch_factor: int = 2
     persistent_workers: bool = True
